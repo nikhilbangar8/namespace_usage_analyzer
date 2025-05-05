@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kubernetes Namespace Report Viewer</title>
+  <style>
+    body { font-family: Arial; margin: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background-color: #f2f2f2; }
+    select { padding: 5px; }
+
+    select, input[type="text"] {
+      padding: 5px;
+      font-size: 14px;
+      width: 300px;
+      box-sizing: border-box;
+      margin-left: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Kubernetes Pod Usage Reports</h2>
+
+  <label for="reportSelect">Select Report:</label>
+  <select id="reportSelect"></select>
+
+  <label for="searchInput">Filter by Pod/Container prefix:</label>
+  <input type="text" id="searchInput" placeholder="e.g. nginx" />
+  <button id="downloadCsvBtn">Download Filtered CSV</button>
+  <div id="reportTable"></div>
+
+  <script>
+    let fullData = [];
+    async function loadReports() {
+      const res = await fetch('output/');
+      const text = await res.text();
+      const regex = /href="(report-.*?\.json)"/g;
+      const files = [...text.matchAll(regex)].map(match => match[1]);
+
+      const select = document.getElementById('reportSelect');
+      files.reverse().forEach(file => {
+        const option = document.createElement('option');
+        option.value = file;
+        option.text = file;
+        select.appendChild(option);
+      });
+
+      if (files.length) loadReport(files[0]);
+    }
+
+    async function loadReport(filename) {
+      try {
+        const res = await fetch(`output/${filename}`);
+        const data = await res.json();
+        fullData = data; // store original for filtering
+        renderTable(fullData);
+      } catch (err) {
+        document.getElementById('reportTable').innerHTML = 'Failed to load report.';
+        console.error(err);
+      }
+    }
+
+    function renderTable(data) {
+      let html = '<table><tr><th>Pod</th><th>Container</th><th>CPU Request</th><th>CPU Limit</th><th>CPU Usage</th><th>Memory Request</th><th>Memory Limit</th><th>Memory Usage</th></tr>';
+      data.forEach(pod => {
+        pod.containers.forEach(container => {
+          html += `<tr>
+            <td>${pod.pod_name}</td>
+            <td>${container.container_name}</td>
+            <td>${container.requests.cpu}</td>
+            <td>${container.limits.cpu}</td>
+            <td>${container.cpu_usage}</td>
+            <td>${container.requests.memory}</td>
+            <td>${container.limits.memory}</td>
+            <td>${container.memory_usage}</td>
+          </tr>`;
+        });
+      });
+      html += '</table>';
+      document.getElementById('reportTable').innerHTML = html;
+    }
+
+    document.getElementById('reportSelect').addEventListener('change', (e) => {
+      loadReport(e.target.value);
+    });
+
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      const filtered = fullData.filter(pod =>
+        pod.pod_name.toLowerCase().startsWith(query) ||
+        pod.containers.some(c => c.container_name.toLowerCase().startsWith(query))
+      );
+      renderTable(filtered);
+    });
+
+    document.getElementById('downloadCsvBtn').addEventListener('click', () => {
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      const filtered = fullData.filter(pod =>
+        pod.pod_name.toLowerCase().startsWith(query) ||
+        pod.containers.some(c => c.container_name.toLowerCase().startsWith(query))
+      );
+
+      let csv = 'Pod,Container,CPU Request,CPU Limit,CPU Usage,Memory Request,Memory Limit,Memory Usage\n';
+
+      filtered.forEach(pod => {
+        pod.containers.forEach(container => {
+          csv += [
+            pod.pod_name,
+            container.container_name,
+            container.requests.cpu,
+            container.limits.cpu,
+            container.cpu_usage,
+            container.requests.memory,
+            container.limits.memory,
+            container.memory_usage
+          ].join(',') + '\n';
+        });
+      });
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const now = new Date().toISOString().replace(/[:.]/g, '-');
+      a.href = url;
+      a.download = `filtered-report-${now}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    loadReports();
+  </script>
+</body>
+</html>
